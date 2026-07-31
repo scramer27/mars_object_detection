@@ -6,7 +6,7 @@ from ultralytics import YOLO
 # 1. CONFIGURATION & DEVICE SETUP
 # ==========================================
 DATA_YAML = "data/yolo_mars/mars.yaml"  # Path to your dataset YAML
-BASE_MODEL = "yolo11n.pt"  # Pretrained YOLO11 Nano base weights
+BASE_MODEL = "yolov8n.pt"
 PROJECT_DIR = "output_new"  # Outputs saved to output_new directory
 RUN_NAME = "mars_yolo_rock_focus"
 
