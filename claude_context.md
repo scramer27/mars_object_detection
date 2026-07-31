@@ -1,47 +1,66 @@
-Using Git is much cleaner and eliminates any manual file copying! Since the 3.2 MB file is well under GitHub's 100 MB limit, standard Git commands will work seamlessly.
-
-Here is the 2-part sequence:
+Fair point. The issue isn't Git anymore—it's a compatibility wall between Ultralytics and VectorBlox.
 
 ---
 
-### 🍏 Step 1: Commit & Push from your Mac
+## 🔍 The Root Cause
+
+Look at the warning Ultralytics output on your Mac during export:
+
+> `WARNING ⚠️ format='tflite' is deprecated as of 8.4.83 and has been replaced by the unified Google LiteRT format. Exporting format='litert' instead.`
+
+In Ultralytics $\ge$ 8.4.83, exporting to `tflite` secretly routes through Google's new **`litert_torch`** backend. LiteRT generates FlatBuffers with newer 64-bit buffer offsets.
+
+When Microchip VectorBlox's `tflite_preprocess` script tries to parse this new format in Python using `tf.lite.Interpreter(..., experimental_preserve_all_tensors=True)`, standard C++ TensorFlow inside VectorBlox chokes and throws:
+`ValueError: Constant buffer 84 specified an out of range offset`
+
+---
+
+## 🛠️ The Fix: Export ONNX → Convert via VectorBlox (`onnx2tf`)
+
+Microchip's VectorBlox SDK expects standard TensorFlow Lite flatbuffers. The official Microchip workflow converts YOLO models via **ONNX** using `onnx2tf` (which is pre-installed inside VectorBlox's `vbx_env`).
+
+### Step 1: Export ONNX on your Mac & Push
 
 Run this in your **Mac terminal**:
 
 ```bash
 cd /Users/scramer/Documents/mars_object_detection
 
-# 1. Copy the new file into the payload folder
-mkdir -p fpga_payload
-cp runs/detect/output_yolov8_fpga/mars_yolov8n_fpga/weights/best_int8.tflite fpga_payload/mars_yolov8_fpga_full_integer_quant.tflite
+# 1. Export standard ONNX model (opset 12 is optimal for VectorBlox)
+yolo export model=runs/detect/output_yolov8_fpga/mars_yolov8n_fpga/weights/best.pt format=onnx opset=12 simplify=True
 
-# 2. Stage, commit, and push (-f overrides any .gitignore rules for .tflite files)
-git add -f fpga_payload/mars_yolov8_fpga_full_integer_quant.tflite
-git commit -m "Add fresh INT8 TFLite export from Mac"
+# 2. Copy to fpga_payload and push
+mkdir -p fpga_payload
+cp runs/detect/output_yolov8_fpga/mars_yolov8n_fpga/weights/best.onnx fpga_payload/best.onnx
+
+git add -f fpga_payload/best.onnx
+git commit -m "Add ONNX model for VectorBlox onnx2tf conversion"
 git push
 
 ```
 
 ---
 
-### 🪟 Step 2: Pull & Compile in WSL
+### Step 2: Convert to Classic TFLite & Compile in WSL
 
-Switch to your **WSL terminal** and run this:
+Switch to your **WSL terminal** and run this sequence:
 
 ```bash
-# 1. Go to repo and pull the fresh file
 cd /mnt/c/Users/scramer/Documents/26X/mars_object_detection
 git pull
 
-# 2. Activate VectorBlox environment
+# 1. Activate VectorBlox environment
 source ~/VectorBlox-SDK/setup_vars.sh
 
-# 3. Preprocess for VectorBlox
-tflite_preprocess \
-    fpga_payload/mars_yolov8_fpga_full_integer_quant.tflite \
-    --scale 255
+# 2. Convert ONNX -> Classic INT8 TFLite using VectorBlox's built-in tool
+onnx2tf -i fpga_payload/best.onnx -o fpga_payload/tf_out -oiqt
 
-# 4. Compile into the FPGA binary
+# 3. Copy the generated INT8 model to the expected filename
+cp fpga_payload/tf_out/*_full_integer_quant.tflite fpga_payload/mars_yolov8_fpga_full_integer_quant.tflite
+
+# 4. Preprocess and compile for FPGA
+tflite_preprocess fpga_payload/mars_yolov8_fpga_full_integer_quant.tflite --scale 255
+
 vnnx_compile \
     -s V1000 \
     -c ncomp \
@@ -50,15 +69,4 @@ vnnx_compile \
 
 ```
 
----
-
-### Check Your Result
-
-Once `vnnx_compile` finishes, verify your output:
-
-```bash
-ls -lh fpga_payload/mars_yolov8.vnnx
-
-```
-
-You should see your compiled `.vnnx` FPGA binary ready to deploy!
+`onnx2tf` outputs standard TFLite buffers, allowing `tflite_preprocess` to parse the file without offset errors.
