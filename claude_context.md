@@ -1,47 +1,39 @@
-mars_object_detection) scramer@MT-400226 mars_object_detection % git pull
-remote: Enumerating objects: 5, done.
-remote: Counting objects: 100% (5/5), done.
-remote: Compressing objects: 100% (2/2), done.
-remote: Total 3 (delta 1), reused 3 (delta 1), pack-reused 0 (from 0)
-Unpacking objects: 100% (3/3), 1.41 KiB | 289.00 KiB/s, done.
-From https://github.com/scramer27/mars_object_detection
-   f7cb072..344c164  main       -> origin/main
-Updating f7cb072..344c164
-Fast-forward
- claude_context.md | 74 +++++++++++++++++++++++++++++++++++++++++++++++++++---------
- 1 file changed, 63 insertions(+), 11 deletions(-)
-(mars_object_detection) scramer@MT-400226 mars_object_detection % python3 -c "
-from ultralytics import YOLO
-m = YOLO('runs/detect/output_clean/mars_yolo_fpga/weights/best.pt')
-print(m.model.yaml.get('nc'), m.names)
-"
-4 {0: 'Soil', 1: 'Bedrock', 2: 'Sand', 3: 'Big Rock'}
-(mars_object_detection) scramer@MT-400226 mars_object_detection % python new_patch.py
+Confirmed — this worked exactly as intended.
 
-Ultralytics 8.4.112 🚀 Python-3.11.15 torch-2.13.0 CPU (Apple M1 Max)
-YOLO11n summary (fused): 101 layers, 2,582,932 parameters, 0 gradients, 1.0 GFLOPs
+## Sanity-checking the output shapes
 
-PyTorch: starting from 'runs/detect/output_clean/mars_yolo_fpga/weights/best.pt' with input shape (1, 3, 256, 256) BCHW and output shape(s) ((1, 68, 32, 32), (1, 68, 16, 16), (1, 68, 8, 8)) (5.2 MB)
+`68 = 4×reg_max(16) + nc(4)` — that matches YOLO11's DFL box regression (4 sides × 16 bins) + 4 class logits, per anchor point, at three scales (32×32 = stride 8, 16×16 = stride 16, 8×8 = stride 32 for a 256×256 input). This is exactly the raw pre-decode format we wanted — no flatten, no concat-across-scales, no DFL softmax, no class sigmoid. Should compile cleanly through VectorBlox now.
 
-ONNX: starting export with onnx 1.22.0 opset 12...
-ONNX: slimming with onnxslim 0.1.94...
-ONNX: export success ✅ 0.6s, saved as 'runs/detect/output_clean/mars_yolo_fpga/weights/best.onnx' (9.9 MB)
+## Push it to the payload
 
-Export complete (0.7s)
-Results saved to /Users/scramer/Documents/mars_object_detection/runs/detect/output_clean/mars_yolo_fpga/weights/best.onnx
-Predict:         yolo predict task=detect model=runs/detect/output_clean/mars_yolo_fpga/weights/best.onnx imgsz=256 
-Validate:        yolo val task=detect model=runs/detect/output_clean/mars_yolo_fpga/weights/best.onnx imgsz=256 data=data/yolo_mars/mars.yaml  
-Visualize:       https://netron.app
-(mars_object_detection) scramer@MT-400226 mars_object_detection % python3 -c "
-import onnx
-m = onnx.load('runs/detect/output_clean/mars_yolo_fpga/weights/best.onnx')
-print('Outputs:', [o.name for o in m.graph.output])
-for o in m.graph.output:
-    dims = [d.dim_value for d in o.type.tensor_type.shape.dim]
-    print(o.name, dims)
-"
-Outputs: ['output0', '493', '514']
-output0 [1, 68, 32, 32]
-493 [1, 68, 16, 16]
-514 [1, 68, 8, 8]
-(mars_object_detection) scramer@MT-400226 mars_object_detection % 
+```bash
+cp runs/detect/output_clean/mars_yolo_fpga/weights/best.onnx fpga_payload/best.onnx
+git add fpga_payload/best.onnx
+git commit -m "Re-export best.onnx with raw Detect head (3 scale outputs, no flatten/decode) for VectorBlox compatibility"
+git push
+```
+
+## ⚠️ Before you touch WSL — this changes more than the compile step
+
+The original plan treated this as a drop-in replacement, but it isn't quite — the model's **output contract changed entirely**, from one decoded tensor to three raw per-scale tensors. That has knock-on effects on things already built or planned:
+
+1. **`build_fpga_payload.py`** — if this script previously used the old `best.onnx` (single decoded output) to generate expected/ground-truth outputs for the `.bin` test payloads, it needs to be re-run against the new model, and any decode/postprocessing logic in it now needs to do the DFL decode + class sigmoid + NMS itself, since the model no longer does it.
+2. **`yoloInfer.py -v 11`** — the `-v 11` flag likely already implements this exact raw-output decode (that's probably *why* the flag exists — Microchip's example script is built to consume YOLO11's raw per-scale format, not a fully decoded one). This is good news — it means you're now aligned with what the tool expects, rather than fighting it. But worth confirming the output tensor **naming/order** it expects matches `['output0', '493', '514']` at `32×32, 16×16, 8×8` — those `493`/`514` names are ONNX's auto-generated node IDs and could shift between export runs. If `yoloInfer.py` selects outputs by name rather than by position/shape, this could silently break. Worth grepping for how it identifies scale outputs:
+
+```bash
+grep -n "output0\|reg_max\|def.*decode\|stride" $VBX_SDK/example/python/yoloInfer.py
+```
+
+3. **The onnxruntime comparison script** (still not built) — this now needs real decode logic (DFL bin expectation → distance, anchor point + stride → box, sigmoid on class logits, NMS) to turn either model's raw outputs into comparable boxes. This is a meaningfully bigger script than "run both, diff the boxes" — flagging it now so it's built correctly the first time rather than assumed trivial.
+
+## Immediate next steps
+
+1. `git push` the new `best.onnx` (above).
+2. Switch to WSL, `git pull`.
+3. Re-run:
+```bash
+onnx2tf -i fpga_payload/best.onnx -o fpga_payload/tflite_out --output_integer_quantized_tflite -cotof
+tflite_preprocess fpga_payload/tflite_out/best_full_integer_quant.tflite --scale 255
+vnnx_compile -s V1000 -c ncomp -t fpga_payload/tflite_out/best_full_integer_quant.pre.tflite -o fpga_payload/best.vnnx
+```
+4. Before running `yoloInfer.py`, do the `grep` above to confirm how it maps outputs to scales — paste the result here and I'll help interpret it if it's not obvious.
