@@ -1,45 +1,38 @@
-Clear answer: **`runs/detect/output_clean/mars_yolo_fpga/weights/best.pt`**
-
-Its timestamp (15:01:23) is the closest preceding the `best.onnx` commit (16:38:44) — about 1.5 hours gap, which is very plausible if you trained, then did some manual export/testing/inspection before committing, versus the others which are 3+ hours to over 5 hours removed. Combined with the folder name literally being `mars_yolo_fpga`, this confirms the earlier guess.
-
-## Confirm class count/names before exporting
-
-```bash
-python3 -c "
+mars_object_detection) scramer@MT-400226 mars_object_detection % git pull
+remote: Enumerating objects: 5, done.
+remote: Counting objects: 100% (5/5), done.
+remote: Compressing objects: 100% (2/2), done.
+remote: Total 3 (delta 1), reused 3 (delta 1), pack-reused 0 (from 0)
+Unpacking objects: 100% (3/3), 1.41 KiB | 289.00 KiB/s, done.
+From https://github.com/scramer27/mars_object_detection
+   f7cb072..344c164  main       -> origin/main
+Updating f7cb072..344c164
+Fast-forward
+ claude_context.md | 74 +++++++++++++++++++++++++++++++++++++++++++++++++++---------
+ 1 file changed, 63 insertions(+), 11 deletions(-)
+(mars_object_detection) scramer@MT-400226 mars_object_detection % python3 -c "
 from ultralytics import YOLO
 m = YOLO('runs/detect/output_clean/mars_yolo_fpga/weights/best.pt')
 print(m.model.yaml.get('nc'), m.names)
 "
-```
+4 {0: 'Soil', 1: 'Bedrock', 2: 'Sand', 3: 'Big Rock'}
+(mars_object_detection) scramer@MT-400226 mars_object_detection % python new_patch.py
 
-Expect `nc=4` and names matching your soil/bedrock/sand/big-rock classes.
+Ultralytics 8.4.112 🚀 Python-3.11.15 torch-2.13.0 CPU (Apple M1 Max)
+YOLO11n summary (fused): 101 layers, 2,582,932 parameters, 0 gradients, 1.0 GFLOPs
 
-## Run the export with the confirmed path
+PyTorch: starting from 'runs/detect/output_clean/mars_yolo_fpga/weights/best.pt' with input shape (1, 3, 256, 256) BCHW and output shape(s) ((1, 68, 32, 32), (1, 68, 16, 16), (1, 68, 8, 8)) (5.2 MB)
 
-```python
-import types
-import torch
-from ultralytics import YOLO
+ONNX: starting export with onnx 1.22.0 opset 12...
+ONNX: slimming with onnxslim 0.1.94...
+ONNX: export success ✅ 0.6s, saved as 'runs/detect/output_clean/mars_yolo_fpga/weights/best.onnx' (9.9 MB)
 
-def raw_forward(self, x):
-    for i in range(self.nl):
-        x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
-    return x
-
-model = YOLO("runs/detect/output_clean/mars_yolo_fpga/weights/best.pt")
-model.model.model[-1].forward = types.MethodType(raw_forward, model.model.model[-1])
-model.export(format="onnx", opset=12, imgsz=256, simplify=True, dynamic=False)
-```
-
-This will write `best.onnx` next to the weights file, i.e. at:
-```
-runs/detect/output_clean/mars_yolo_fpga/weights/best.onnx
-```
-
-## Verify the patch took effect
-
-```bash
-python3 -c "
+Export complete (0.7s)
+Results saved to /Users/scramer/Documents/mars_object_detection/runs/detect/output_clean/mars_yolo_fpga/weights/best.onnx
+Predict:         yolo predict task=detect model=runs/detect/output_clean/mars_yolo_fpga/weights/best.onnx imgsz=256 
+Validate:        yolo val task=detect model=runs/detect/output_clean/mars_yolo_fpga/weights/best.onnx imgsz=256 data=data/yolo_mars/mars.yaml  
+Visualize:       https://netron.app
+(mars_object_detection) scramer@MT-400226 mars_object_detection % python3 -c "
 import onnx
 m = onnx.load('runs/detect/output_clean/mars_yolo_fpga/weights/best.onnx')
 print('Outputs:', [o.name for o in m.graph.output])
@@ -47,17 +40,8 @@ for o in m.graph.output:
     dims = [d.dim_value for d in o.type.tensor_type.shape.dim]
     print(o.name, dims)
 "
-```
-
-You want **3 outputs**, spatial dims like 32×32, 16×16, 8×8 (for 256 input with strides 8/16/32), not a single flattened one.
-
-## Then move it into the payload folder and push
-
-```bash
-cp runs/detect/output_clean/mars_yolo_fpga/weights/best.onnx fpga_payload/best.onnx
-git add fpga_payload/best.onnx
-git commit -m "Re-export best.onnx with raw Detect head (no flatten/decode) for VectorBlox compatibility"
-git push
-```
-
-Once that's pushed, switch back to the WSL/Windows side, `git pull`, and rerun the `onnx2tf` → `tflite_preprocess` → `vnnx_compile` chain on the new file. Let me know what the 3-output check prints before you push — worth confirming here first since a bad export silently propagating through the whole pipeline again would cost another full round trip.
+Outputs: ['output0', '493', '514']
+output0 [1, 68, 32, 32]
+493 [1, 68, 16, 16]
+514 [1, 68, 8, 8]
+(mars_object_detection) scramer@MT-400226 mars_object_detection % 
