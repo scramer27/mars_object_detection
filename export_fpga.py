@@ -1,13 +1,20 @@
+import glob
+import os
 from ultralytics import YOLO
 
-# 1. Load your trained PyTorch weights
-model = YOLO("runs/detect/output_yolov8_fpga/mars_yolov8n_fpga/weights/best.pt")
+# 1. Automatically find your dataset YAML file
+yaml_files = glob.glob("**/*.yaml", recursive=True)
+# Filter out venv or hidden folders
+yaml_files = [f for f in yaml_files if ".venv" not in f and "venv" not in f]
 
-# 2. Export directly to TFLite INT8 using your dataset calibration
-model.export(
-    format="tflite",
-    int8=True,
-    data="ai4mars.yaml",  # Path to your dataset yaml on Mac
-    imgsz=256,
-)
-print("Export complete!")
+if not yaml_files:
+    raise FileNotFoundError("Could not find any dataset .yaml file in your project!")
+
+# Prioritize files with 'mars' or 'data' in the name
+dataset_yaml = yaml_files[0]
+for y in yaml_files:
+    if "mars" in y.lower() or "ai4mars" in y.lower():
+        dataset_yaml = y
+        break
+
+print(f"--> Found calibration dataset config: {dataset_yaml}")
