@@ -81,3 +81,5 @@ vnnx_compile -s V1000 -c ncomp -t fpga_payload/mars_yolov8_int8_fixed.pre.tflite
 ```
 
 When you paste that script into the `scramer@MT-316560` terminal, does `python3 fix_litert.py` complete without errors?
+
+REEEH
