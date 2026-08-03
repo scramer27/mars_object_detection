@@ -167,4 +167,136 @@ Traceback (most recent call last):
 FileNotFoundError: 'ai4mars.yaml' does not exist
 (mars_object_detection) scramer@MT-400226 mars_object_detection % 
 
-i dont think u found it 
+
+The script crashed because `ai4mars.yaml` isn't directly in your root folder—it's likely buried inside a subfolder (like `data/yolo_mars/mars.yaml`).
+
+Update your `export_fpga.py` script on your **Mac** with this version. It will automatically search your project for your dataset YAML file so you don't have to hunt down the exact path manually.
+
+---
+
+### 🍏 Step 1: Update `export_fpga.py` on your Mac
+
+Replace the contents of `/Users/scramer/Documents/mars_object_detection/export_fpga.py` with:
+
+```python
+import glob
+import os
+from ultralytics import YOLO
+
+# 1. Automatically find your dataset YAML file
+yaml_files = glob.glob("**/*.yaml", recursive=True)
+# Filter out venv or hidden folders
+yaml_files = [f for f in yaml_files if ".venv" not in f and "venv" not in f]
+
+if not yaml_files:
+    raise FileNotFoundError("Could not find any dataset .yaml file in your project!")
+
+# Prioritize files with 'mars' or 'data' in the name
+dataset_yaml = yaml_files[0]
+for y in yaml_files:
+    if "mars" in y.lower() or "ai4mars" in y.lower():
+        dataset_yaml = y
+        break
+
+print(f"--> Found calibration dataset config: {dataset_yaml}")
+
+# 2. Load PyTorch model weights
+weights = "runs/detect/output_yolov8_fpga/mars_yolov8n_fpga/weights/best.pt"
+model = YOLO(weights)
+
+# 3. Export to INT8 TFLite
+model.export(
+    format="tflite",
+    int8=True,
+    data=dataset_yaml,
+    imgsz=256,
+)
+
+print("--> Export complete!")
+
+```
+
+---
+
+### 🍏 Step 2: Run the Export on Mac & Push to WSL
+
+In your **Mac terminal**:
+
+```bash
+python export_fpga.py
+
+```
+
+Once it finishes successfully, copy the new file into your `fpga_payload` folder and push it to Git:
+
+```bash
+mkdir -p fpga_payload
+
+# Locate the newly exported tflite file
+cp runs/detect/output_yolov8_fpga/mars_yolov8n_fpga/weights/best_saved_model/best_full_integer_quant.tflite fpga_payload/mars_yolov8_int8.tflite
+
+# Push to Git for WSL to download
+git add -f fpga_payload/mars_yolov8_int8.tflite
+git commit -m "Add valid INT8 TFLite model from Mac export"
+git push
+
+```
+
+---
+
+### 🪟 Step 3: Patch & Compile in WSL (Windows)
+
+Switch to your **WSL terminal**:
+
+```bash
+cd /mnt/c/Users/scramer/Documents/26X/mars_object_detection
+git pull
+
+source ~/VectorBlox-SDK/setup_vars.sh
+
+# Patch LOGISTIC scales
+python3 -c '
+import flatbuffers
+from tensorflow.lite.python import schema_py_generated as schema_fb
+
+in_path = "fpga_payload/mars_yolov8_int8.tflite"
+out_path = "fpga_payload/mars_yolov8_patched.tflite"
+
+with open(in_path, "rb") as f:
+    buf = f.read()
+
+model = schema_fb.Model.GetRootAsModel(buf, 0)
+model_t = schema_fb.ModelT.InitFromObj(model)
+
+op_codes = [op.builtinCode if op.builtinCode != 0 else op.deprecatedBuiltinCode for op in model_t.operatorCodes]
+
+count = 0
+for subgraph in model_t.subgraphs:
+    for op in subgraph.operators:
+        if op_codes[op.opcodeIndex] == schema_fb.BuiltinOperator.LOGISTIC:
+            for out_idx in op.outputs:
+                tensor = subgraph.tensors[out_idx]
+                if tensor.quantization:
+                    tensor.quantization.scale = [1.0 / 256.0]
+                    tensor.quantization.zeroPoint = [-128]
+                    count += 1
+
+builder = flatbuffers.Builder(1024 * 1024)
+builder.Finish(model_t.Pack(builder), file_identifier=b"TFL3")
+
+with open(out_path, "wb") as f:
+    f.write(builder.Output())
+
+print(f"Successfully patched {count} LOGISTIC layer(s)!")
+'
+
+# Preprocess and compile to .vnnx
+tflite_preprocess fpga_payload/mars_yolov8_patched.tflite --scale 255
+
+vnnx_compile \
+    -s V1000 \
+    -c ncomp \
+    -t fpga_payload/mars_yolov8_patched.pre.tflite \
+    -o fpga_payload/mars_yolov8.vnnx
+
+```
