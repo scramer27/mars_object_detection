@@ -1,109 +1,83 @@
-You hit **two separate issues** here: a path mismatch in the copy step and a missing dataset path error in Ultralytics during export.
+Haha, fair enough! Let's clear up the terminal setup so we're on the exact same page.
+
+If you're SSHing into your Windows machine from your Mac, or tabbed between remote windows, it's super easy to lose track of which shell is running where.
+
+Looking at your terminal outputs from earlier, you actually have two different hostnames active:
+
+* 🍏 **`scramer@MT-400226`** $\rightarrow$ This is your **Mac (Apple M1 Max)** using `zsh` (`%`).
+* 🪟 **`scramer@MT-316560`** $\rightarrow$ This is **WSL on your Windows PC** (you can tell by `/mnt/c/Users/scramer`, which is the mounted Windows C: drive) using `bash` (`$`).
 
 ---
 
-## 🛑 What Went Wrong
+## Where to Run Everything (By Terminal Name)
 
-1. **Copy Path Failed (`No such file or directory`):**
-You ran `cp .../best_saved_model/best_full_integer_quant.tflite`, but in newer Ultralytics versions (using Google LiteRT), the exported quantized model is created directly at:
-`runs/detect/output_yolov8_fpga/mars_yolov8n_fpga/weights/best_int8.tflite`
-2. **The `FileNotFoundError: 'ai4mars.yaml' does not exist` Error:**
-When exporting to LiteRT/TFLite with `int8=True` (or `quantize=True`), Ultralytics requires a dataset YAML file to calibrate activations. The script was trying to find `ai4mars.yaml` relative to your current working directory instead of pointing to your actual data configuration path (e.g., `data/yolo_mars/mars.yaml`).
+### 1️⃣ In terminal `scramer@MT-400226` (Your Mac)
 
----
-
-## 🛠️ The Fix: Update & Push the TFLite File
-
-Run these commands individually on your **Mac Terminal**:
-
-### Step 1: Copy the correct `best_int8.tflite` model
+This is where you train PyTorch models and run Ultralytics exports.
 
 ```bash
-cp runs/detect/output_yolov8_fpga/mars_yolov8n_fpga/weights/best_int8.tflite fpga_payload/mars_yolov8_int8.tflite
+cd /Users/scramer/Documents/mars_object_detection
 
-```
+# Run the python script to export
+python export_fpga.py
 
-### Step 2: Verify the file exists
-
-```bash
-ls -lh fpga_payload/mars_yolov8_int8.tflite
-
-```
-
-*(You should see a file around ~3.2 MB)*
-
-### Step 3: Add, commit, and push to GitHub
-
-```bash
-git add -f fpga_payload/mars_yolov8_int8.tflite
-git commit -m "Add calibrated INT8 TFLite model for VectorBlox"
+# Push to git
+git add fpga_payload/mars_yolov8_int8.tflite
+git commit -m "Updated TFLite model"
 git push
 
 ```
 
 ---
 
-## 🪟 Step 4: Run VectorBlox Preprocessing in WSL
+### 2️⃣ In terminal `scramer@MT-316560` (Your WSL / Linux Shell)
 
-Once `git push` succeeds, switch to **WSL** and execute:
+This is where Microchip's **VectorBlox SDK** (`tflite_preprocess` and `vnnx_compile`) lives.
 
 ```bash
-cd /mnt/c/Users/scramer/Documents/26X/mars_object_detection
-git pull
+cd ~/build_temp
 
-# Load VectorBlox environment
-source ~/VectorBlox-SDK/setup_vars.sh
+# Create and run the LiteRT buffer fix script
+cat << 'EOF' > fix_litert.py
+import flatbuffers
+from tensorflow.lite.python import schema_py_generated as schema_fb
 
-# Preprocess and compile
-tflite_preprocess fpga_payload/mars_yolov8_int8.tflite --scale 255
+input_path = "fpga_payload/mars_yolov8_int8.tflite"
+output_path = "fpga_payload/mars_yolov8_int8_fixed.tflite"
 
-vnnx_compile \
-  -s V1000 \
-  -c ncomp \
-  -t fpga_payload/mars_yolov8_int8.pre.tflite \
-  -o fpga_payload/mars_yolov8.vnnx
+with open(input_path, "rb") as f:
+    file_bytes = f.read()
+
+model_obj = schema_fb.Model.GetRootAsModel(file_bytes, 0)
+model_t = schema_fb.ModelT.InitFromObj(model_obj)
+
+for b in model_t.buffers:
+    if b.offset > 0 and b.size > 0:
+        b.data = list(file_bytes[b.offset : b.offset + b.size])
+        b.offset = 0
+        b.size = 0
+
+for subgraph in model_t.subgraphs:
+    for tensor in subgraph.tensors:
+        if tensor.quantization is not None:
+            q = tensor.quantization
+            if q.scale is None: q.scale = []
+            if q.zeroPoint is None: q.zeroPoint = []
+
+builder = flatbuffers.Builder(len(file_bytes) * 3)
+packed = model_t.Pack(builder)
+builder.Finish(packed, b"TFL3")
+
+with open(output_path, "wb") as f:
+    f.write(builder.Output())
+EOF
+
+python3 fix_litert.py
+
+# Preprocess and Compile for VectorBlox
+tflite_preprocess fpga_payload/mars_yolov8_int8_fixed.tflite
+vnnx_compile -s V1000 -c ncomp -t fpga_payload/mars_yolov8_int8_fixed.pre.tflite -o fpga_payload/mars_yolov8.vnnx
 
 ```
 
-^ this is what gemini on my mac ssaid
-
-
-cp: runs/detect/output_yolov8_fpga/mars_yolov8n_fpga/weights/best_saved_model/best_full_integer_quant.tflite: No such file or directory
-zsh: command not found: #
-fatal: pathspec 'fpga_payload/mars_yolov8_int8.tflite' did not match any files
-On branch main
-Your branch is up to date with 'origin/main'.
-
-Changes not staged for commit:
-  (use "git add <file>..." to update what will be committed)
-  (use "git restore <file>..." to discard changes in working directory)
-        modified:   export_fpga.py
-
-Untracked files:
-  (use "git add <file>..." to include in what will be committed)
-        fpga_payload/args.yaml
-
-no changes added to commit (use "git add" and/or "git commit -a")
-Everything up-to-date
-(mars_object_detection) scramer@MT-400226 mars_object_detection % cp runs/detect/output_yolov8_fpga/mars_yolov8n_fpga/weights/best_int8.tflite fpga_payload/mars_yolov8_int8.tflite
-(mars_object_detection) scramer@MT-400226 mars_object_detection % ls -lh fpga_payload/mars_yolov8_int8.tflite
--rw-r--r--@ 1 scramer  staff   3.2M Aug  3 14:34 fpga_payload/mars_yolov8_int8.tflite
-(mars_object_detection) scramer@MT-400226 mars_object_detection % git add -f fpga_payload/mars_yolov8_int8.tflite
-git commit -m "Add calibrated INT8 TFLite model for VectorBlox"
-git push
-[main 859abf7] Add calibrated INT8 TFLite model for VectorBlox
- 1 file changed, 0 insertions(+), 0 deletions(-)
- create mode 100644 fpga_payload/mars_yolov8_int8.tflite
-Enumerating objects: 6, done.
-Counting objects: 100% (6/6), done.
-Delta compression using up to 10 threads
-Compressing objects: 100% (4/4), done.
-Writing objects: 100% (4/4), 2.56 MiB | 3.48 MiB/s, done.
-Total 4 (delta 2), reused 0 (delta 0), pack-reused 0 (from 0)
-remote: Resolving deltas: 100% (2/2), completed with 2 local objects.
-To https://github.com/scramer27/mars_object_detection.git
-   410763a..859abf7  main -> main
-
-   this is what my terminal outptwas ^
-
-   what do i do next
+When you paste that script into the `scramer@MT-316560` terminal, does `python3 fix_litert.py` complete without errors?
