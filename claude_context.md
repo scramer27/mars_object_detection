@@ -126,3 +126,45 @@ vnnx_compile \
     -o fpga_payload/mars_yolov8.vnnx
 
 ```
+
+
+st")
+FileNotFoundError: 'mars.yaml' does not exist
+(mars_object_detection) scramer@MT-400226 mars_object_detection % python export_fpga.py
+WARNING ⚠️ 'int8' is deprecated and will be removed in the future. Use 'quantize' instead.
+WARNING ⚠️ format='tflite' is deprecated as of 8.4.83 and has been replaced by the unified Google LiteRT format. Exporting format='litert' instead. See https://docs.ultralytics.com/integrations/litert/
+Ultralytics 8.4.112 🚀 Python-3.11.15 torch-2.12.1 CPU (Apple M1 Max)
+WARNING ⚠️ LiteRT INT8 export does not support end2end models, disabling end2end branch.
+Model summary (fused): 73 layers, 3,006,428 parameters, 0 gradients, 1.3 GFLOPs
+
+PyTorch: starting from 'runs/detect/output_yolov8_fpga/mars_yolov8n_fpga/weights/best.pt' with input shape (1, 3, 256, 256) BCHW and output shape(s) (1, 8, 1344) (5.9 MB)
+LiteRT: collecting INT8 calibration images from 'data=ai4mars.yaml'
+ERROR ❌ LiteRT: export failure 0.0s: 'ai4mars.yaml' does not exist
+Export to tflite in the cloud with Ultralytics Platform: https://platform.ultralytics.com
+Traceback (most recent call last):
+  File "/Users/scramer/Documents/mars_object_detection/export_fpga.py", line 7, in <module>
+    model.export(
+  File "/Users/scramer/Documents/mars_object_detection/.venv/lib/python3.11/site-packages/ultralytics/engine/model.py", line 769, in export
+    return Exporter(overrides=args, _callbacks=self.callbacks)(model=self.model)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scramer/Documents/mars_object_detection/.venv/lib/python3.11/site-packages/ultralytics/engine/exporter.py", line 945, in __call__
+    f = getattr(self, f"export_{fmt}")()
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scramer/Documents/mars_object_detection/.venv/lib/python3.11/site-packages/ultralytics/engine/exporter.py", line 484, in outer_func
+    f = inner_func(*args, **kwargs)  # exported file/dir or tuple of (file/dir, *)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scramer/Documents/mars_object_detection/.venv/lib/python3.11/site-packages/ultralytics/engine/exporter.py", line 1223, in export_litert
+    calibration_dataset=self.get_int8_calibration_dataloader(prefix)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scramer/Documents/mars_object_detection/.venv/lib/python3.11/site-packages/ultralytics/engine/exporter.py", line 989, in get_int8_calibration_dataloader
+    data = check_det_dataset(self.args.data, split=self.args.split)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scramer/Documents/mars_object_detection/.venv/lib/python3.11/site-packages/ultralytics/data/utils.py", line 497, in check_det_dataset
+    file = Path(check_file(dataset))
+                ^^^^^^^^^^^^^^^^^^^
+  File "/Users/scramer/Documents/mars_object_detection/.venv/lib/python3.11/site-packages/ultralytics/utils/checks.py", line 720, in check_file
+    raise FileNotFoundError(f"'{file}' does not exist")
+FileNotFoundError: 'ai4mars.yaml' does not exist
+(mars_object_detection) scramer@MT-400226 mars_object_detection % 
+
+i dont think u found it 
