@@ -47,14 +47,27 @@ def convert_mask_to_yolo_boxes(mask_path, img_size=(256, 256), min_area_pixels=1
 
 def build_yolo_dataset():
     BASE_DIR = Path(__file__).resolve().parent
-    DATA_DIR = BASE_DIR / "data" / "extracted" / "ai4mars"
+    DATA_DIR = BASE_DIR / "ai4mars-dataset-merged-0.6"
     YOLO_DIR = BASE_DIR / "data" / "yolo_mars"
 
     print("=== Generating YOLO Bounding Box Dataset from AI4Mars Masks ===")
 
+    # Find all PNG files (labels) and JPG files (images)
     all_files = list(DATA_DIR.rglob("*.png")) + list(DATA_DIR.rglob("*.JPG"))
-    label_dict = {f.stem: f for f in all_files if "label" in str(f).lower()}
-    image_list = [f for f in all_files if "label" not in str(f).lower() and f.stem in label_dict]
+    print(f"Found {len(all_files)} total files")
+
+    # Labels are in /labels/ subdirectories, images are in /images/ subdirectories
+    label_files = [f for f in all_files if "/labels/" in str(f) or "\\labels\\" in str(f)]
+    image_files = [f for f in all_files if "/images/" in str(f) or "\\images\\" in str(f)]
+
+    print(f"Found {len(label_files)} label files")
+    print(f"Found {len(image_files)} image files")
+
+    # Match images to labels by filename stem
+    label_dict = {f.stem: f for f in label_files}
+    image_list = [f for f in image_files if f.stem in label_dict]
+
+    print(f"Matched {len(image_list)} image-label pairs")
 
     # Limit sample count for quick iteration if desired
     random.seed(42)

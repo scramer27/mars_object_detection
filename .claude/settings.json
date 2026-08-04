@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//wsl$/Ubuntu/home/scramer/VectorBlox-SDK/python/vbx/vbx/generate/**)"
+    ]
+  }
+}

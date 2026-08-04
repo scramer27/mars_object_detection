@@ -1,6 +1,6 @@
 task: detect
 mode: train
-model: yolo11n.pt
+model: yolov8n.pt
 data: data/yolo_mars/mars.yaml
 epochs: 120
 time: null
@@ -10,7 +10,7 @@ imgsz: 256
 save: true
 save_period: -1
 cache: false
-device: mps
+device: cpu
 workers: 8
 project: output_new
 name: mars_yolo_rock_focus
@@ -113,4 +113,4 @@ auto_augment: randaugment
 erasing: 0.4
 cfg: null
 tracker: tracktrack.yaml
-save_dir: /Users/scramer/Documents/mars_object_detection/runs/detect/output_new/mars_yolo_rock_focus
+save_dir: C:\Users\scramer\Documents\26X\mars_object_detection\runs\detect\output_new\mars_yolo_rock_focus

@@ -6,9 +6,9 @@ from ultralytics import YOLO
 # 1. CONFIGURATION & DEVICE SETUP
 # ==========================================
 DATA_YAML = "data/yolo_mars/mars.yaml"  # Path to your dataset YAML
-BASE_MODEL = "yolov8n.pt"
+BASE_MODEL = "yolov8n.pt"  # YOLOv8n - VectorBlox compatible
 PROJECT_DIR = "output_new"  # Outputs saved to output_new directory
-RUN_NAME = "mars_yolo_rock_focus"
+RUN_NAME = "mars_yolov8_rock_focus"
 
 # Detect acceleration hardware (Apple Silicon GPU -> mps, CUDA -> cuda, or cpu)
 if torch.backends.mps.is_available():
@@ -36,6 +36,7 @@ def run_training():
         imgsz=256,  # Native input size for VectorBlox
         batch=32,  # Stabilizes BatchNorm on M1 Max GPU
         device=DEVICE,
+        workers=8,  # Use 8 workers for data loading (half of CPU count)
         project=PROJECT_DIR,
         name=RUN_NAME,
         exist_ok=True,
