@@ -1,5 +1,31 @@
+# Dataset and raw images (large, don't push)
 data/
+ai4mars-dataset-merged-0.6/
+
+# Training outputs
 output/
 output_2/
+output_new/
+runs/
+
+# Models (track separately)
+*.pt
+*.onnx
+*.tflite
+*.vnnx
+!fpga_payload/best.pt  # Exception: keep the final trained model
+
+# Generated test images
+archive/test_data/
+
+# Python
 .venv/
-ai4mars-dataset-merged-0.6
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
